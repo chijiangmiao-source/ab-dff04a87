@@ -1,0 +1,15 @@
+{
+  "name": "transducer-audit",
+  "version": "1.0.0",
+  "description": "Finite-state transducer functional-equivalence audit service (satellite command transcoder)",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "test": "node --test test/transducer.test.mjs test/differential.test.mjs test/api.test.mjs",
+    "verify": "node scripts/verify.mjs"
+  }
+}

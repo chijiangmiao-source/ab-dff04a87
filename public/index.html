@@ -1,0 +1,376 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>星载指令转码器 · 功能一致性审计</title>
+<style>
+  :root { --bg:#0b1020; --panel:#121a30; --line:#24304f; --fg:#e6ecff; --mut:#8fa0c8;
+          --ok:#2fbf71; --bad:#ef5b6b; --warn:#e8b339; --acc:#6aa0ff; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+         background:var(--bg); color:var(--fg); }
+  header { padding:18px 24px; border-bottom:1px solid var(--line); display:flex;
+           align-items:baseline; gap:16px; flex-wrap:wrap; }
+  header h1 { font-size:17px; margin:0; }
+  header .sub { color:var(--mut); font-size:12px; }
+  main { display:grid; grid-template-columns: minmax(420px, 560px) 1fr; gap:20px; padding:20px 24px; }
+  @media (max-width: 980px) { main { grid-template-columns: 1fr; } }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px; }
+  .panel h2 { font-size:13px; margin:0 0 12px; color:var(--mut); letter-spacing:.08em;
+              text-transform:uppercase; }
+  label { display:block; margin:10px 0 4px; color:var(--mut); font-size:12px; }
+  input[type=text] { width:100%; background:#0d1428; border:1px solid var(--line);
+      color:var(--fg); border-radius:6px; padding:7px 9px; font:inherit; }
+  input[type=text]:focus { outline:none; border-color:var(--acc); }
+  .row { display:flex; gap:10px; }
+  .row > div { flex:1; }
+  table.trans { width:100%; border-collapse:collapse; margin-top:8px; }
+  table.trans th { text-align:left; color:var(--mut); font-size:11px; font-weight:600;
+      padding:4px 6px; }
+  table.trans td { padding:2px 4px; }
+  table.trans input { padding:5px 7px; }
+  .c-id { width:18%; } .c-st { width:20%; } .c-in { width:12%; } .c-out { width:16%; }
+  .c-del { width:28px; }
+  button { font:inherit; border-radius:6px; border:1px solid var(--line);
+      background:#1a2540; color:var(--fg); padding:8px 14px; cursor:pointer; }
+  button:hover { border-color:var(--acc); }
+  button.primary { background:var(--acc); border-color:var(--acc); color:#081226; font-weight:700; }
+  button.ghost { background:transparent; }
+  .toolbar { display:flex; gap:10px; margin-top:14px; align-items:center; flex-wrap:wrap; }
+  .pill { font-size:11px; padding:2px 8px; border-radius:999px; border:1px solid var(--line);
+          color:var(--mut); }
+  .verdict { padding:14px 16px; border-radius:10px; border:1px solid var(--line);
+             margin-bottom:14px; }
+  .verdict.ok  { border-color:var(--ok);  background:rgba(47,191,113,.08); }
+  .verdict.bad { border-color:var(--bad); background:rgba(239,91,107,.09); }
+  .verdict.frozen { border-color:var(--warn); background:rgba(232,179,57,.07); }
+  .verdict h3 { margin:0 0 4px; font-size:15px; }
+  .errs { border:1px solid var(--bad); background:rgba(239,91,107,.08); border-radius:10px;
+          padding:12px 16px; margin-bottom:14px; }
+  .errs li { margin:3px 0; }
+  .errs code { color:#ffc6cc; }
+  pre { background:#0d1428; border:1px solid var(--line); border-radius:8px; padding:10px 12px;
+        overflow:auto; margin:6px 0; }
+  .muted { color:var(--mut); }
+  .tag { color:var(--acc); }
+  .replay-row { display:flex; gap:8px; margin-top:8px; }
+  .replay-row input { flex:1; }
+  .diff { color:var(--bad); font-weight:700; }
+  .same { color:var(--ok); }
+  ul.auditlist { list-style:none; padding:0; margin:8px 0 0; }
+  ul.auditlist li { padding:6px 0; border-bottom:1px dashed var(--line); display:flex;
+      gap:10px; align-items:center; }
+  ul.auditlist button { padding:3px 10px; font-size:12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>星载指令转码器 · 功能一致性审计</h1>
+  <span class="sub">精确判定：同一输入符号串是否会沿两条可接受路径产生不同下行字节串（无长度截断 / 采样 / 有限枚举）</span>
+  <span id="health" class="pill">健康检查中…</span>
+</header>
+
+<main>
+  <section class="panel">
+    <h2>审计规格</h2>
+
+    <label>稳定审计标识</label>
+    <input id="auditId" type="text" placeholder="如 CMD-XCODER-07" autocomplete="off" />
+
+    <div class="row">
+      <div>
+        <label>输入字母表（空格/逗号分隔，单字符 ASCII 字母或数字）</label>
+        <input id="alphabet" type="text" placeholder="a b c" autocomplete="off" />
+      </div>
+      <div>
+        <label>初态</label>
+        <input id="initialState" type="text" placeholder="q0" autocomplete="off" />
+      </div>
+    </div>
+
+    <label>状态集合（至多 10 个，空格/逗号分隔）</label>
+    <input id="states" type="text" placeholder="q0 q1 q2" autocomplete="off" />
+
+    <label>接受态集合（至少 1 个）</label>
+    <input id="acceptingStates" type="text" placeholder="q2" autocomplete="off" />
+
+    <label>迁移（至多 30 条；输入留空或 ε 表示 ε 迁移；输出为 0-2 个大写 ASCII 字符）</label>
+    <table class="trans">
+      <thead><tr>
+        <th class="c-id">标识</th><th class="c-st">源 → 目标</th>
+        <th class="c-in">输入</th><th class="c-out">输出</th><th class="c-del"></th>
+      </tr></thead>
+      <tbody id="transBody"></tbody>
+    </table>
+    <div class="toolbar">
+      <button type="button" id="addTrans">＋ 迁移</button>
+      <span id="transCount" class="pill">0 / 30</span>
+      <button type="button" class="ghost" id="loadDemo">载入反例样例（ε + 双输出）</button>
+    </div>
+
+    <div class="toolbar">
+      <button type="button" class="primary" id="submitBtn">提交审计</button>
+      <span id="submitState" class="muted"></span>
+    </div>
+
+    <h2 style="margin-top:22px">重开审计</h2>
+    <div class="replay-row">
+      <input id="reopenId" type="text" placeholder="输入已持久化的审计标识" autocomplete="off" />
+      <button type="button" id="reopenBtn">重开</button>
+    </div>
+    <ul class="auditlist" id="auditList"></ul>
+  </section>
+
+  <section class="panel">
+    <h2>审计结论与证据</h2>
+    <div id="result"><p class="muted">尚未提交。任何编辑都会立即清除这里的旧证据。</p></div>
+  </section>
+</main>
+
+<script>
+const EPS = 'ε';
+const MAX_TRANS = 30;
+const $ = (id) => document.getElementById(id);
+
+let transitionRows = [];
+let lastLoadedAuditId = null; // 已成功加载/提交的标识；编辑后冻结结论失效
+
+function addRow(t = {}) {
+  if (transitionRows.length >= MAX_TRANS) return;
+  const tr = document.createElement('tr');
+  tr.innerHTML = `
+    <td class="c-id"><input data-f="id" type="text" placeholder="t1"></td>
+    <td class="c-st" style="display:flex;gap:4px">
+      <input data-f="from" type="text" placeholder="q0" style="flex:1">
+      <span class="muted" style="align-self:center">→</span>
+      <input data-f="to" type="text" placeholder="q1" style="flex:1"></td>
+    <td class="c-in"><input data-f="input" type="text" placeholder="a / ε"></td>
+    <td class="c-out"><input data-f="output" type="text" placeholder="AB"></td>
+    <td class="c-del"><button type="button" class="ghost" data-del>×</button></td>`;
+  tr.querySelector('[data-del]').addEventListener('click', () => {
+    tr.remove();
+    transitionRows = transitionRows.filter((r) => r !== tr);
+    refreshCount();
+    clearEvidence();
+  });
+  for (const inp of tr.querySelectorAll('input')) {
+    const f = inp.dataset.f;
+    if (t[f] !== undefined) inp.value = t[f];
+    inp.addEventListener('input', clearEvidence);
+  }
+  $('transBody').appendChild(tr);
+  transitionRows.push(tr);
+  refreshCount();
+}
+
+function refreshCount() {
+  $('transCount').textContent = `${transitionRows.length} / ${MAX_TRANS}`;
+}
+
+function collectSpec() {
+  const transitions = transitionRows.map((tr) => {
+    const get = (f) => tr.querySelector(`[data-f="${f}"]`).value.trim();
+    return { id: get('id'), from: get('from'), to: get('to'),
+             input: get('input'), output: get('output').toUpperCase() };
+  });
+  return {
+    auditId: $('auditId').value.trim(),
+    alphabetRaw: $('alphabet').value,
+    statesRaw: $('states').value,
+    initialState: $('initialState').value,
+    acceptingStatesRaw: $('acceptingStates').value,
+    transitions,
+  };
+}
+
+function fillForm(rec) {
+  const s = rec.spec;
+  $('auditId').value = s.auditId ?? '';
+  $('alphabet').value = (s.alphabet ?? []).join(' ');
+  $('states').value = (s.states ?? []).join(' ');
+  $('initialState').value = s.initialState ?? '';
+  $('acceptingStates').value = (s.acceptingStates ?? []).join(' ');
+  $('transBody').innerHTML = '';
+  transitionRows = [];
+  for (const t of s.transitions ?? []) {
+    addRow({ id: t.id, from: t.from, to: t.to,
+             input: t.input === '' ? EPS : (t.input ?? ''), output: t.output ?? '' });
+  }
+  while (transitionRows.length < Math.min(3, MAX_TRANS)) addRow();
+  lastLoadedAuditId = rec.auditId;
+  renderResult(rec.result, { frozen: true, createdAt: rec.createdAt });
+}
+
+function clearEvidence() {
+  $('result').innerHTML = '<p class="muted">草稿已修改：旧证据已清除，请重新提交。</p>';
+  $('submitState').textContent = '';
+  lastLoadedAuditId = null;
+}
+
+function esc(s) {
+  return String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+}
+
+function renderPath(path) {
+  const rows = path.map((step) => `
+    <tr><td><code>${esc(step.transitionId)}</code></td>
+        <td>${step.consumed === EPS ? '<span class="tag">ε</span>' : esc(step.consumed)}</td>
+        <td>${step.output === '' ? '<span class="muted">ε</span>' : esc(step.output)}</td></tr>`).join('');
+  return `<table style="width:100%;border-collapse:collapse;font-size:12px">
+    <thead><tr style="color:var(--mut)"><th align="left">迁移</th><th align="left">消费</th>
+    <th align="left">追加输出</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function renderResult(result, opts = {}) {
+  const box = $('result');
+  if (result.functional) {
+    box.innerHTML = `
+      <div class="verdict ok ${opts.frozen ? 'frozen' : ''}">
+        <h3 class="same">✓ 功能一致（functional）</h3>
+        <div class="muted">任意输入符号串的所有可接受路径均产生相同下行字节串。</div>
+        ${opts.frozen ? `<div class="muted" style="margin-top:6px">🧊 冻结结论（同标识同载荷重传回放） · 结论时间 ${esc(opts.createdAt ?? '')}</div>` : ''}
+      </div>`;
+    return;
+  }
+  const w = result.witness;
+  box.innerHTML = `
+    <div class="verdict bad ${opts.frozen ? 'frozen' : ''}">
+      <h3 class="diff">✗ 功能不一致（ambiguous）</h3>
+      <div>反例输入串：<code class="diff">${esc(w.input)}</code>
+           <span class="pill">长度 ${w.input.length}</span></div>
+      ${opts.frozen ? `<div class="muted" style="margin-top:6px">🧊 冻结结论（同标识同载荷重传回放） · 结论时间 ${esc(opts.createdAt ?? '')}</div>` : ''}
+    </div>
+    <div class="row" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div><strong>路径 A</strong>${renderPath(w.path1)}
+        <pre>输出 1 = ${esc(w.output1 === '' ? 'ε' : w.output1)}</pre></div>
+      <div><strong>路径 B</strong>${renderPath(w.path2)}
+        <pre>输出 2 = ${esc(w.output2 === '' ? 'ε' : w.output2)}</pre></div>
+    </div>
+    <p class="diff">两输出不一致：
+      <code>${esc(w.output1 === '' ? 'ε' : w.output1)}</code> ≠
+      <code>${esc(w.output2 === '' ? 'ε' : w.output2)}</code></p>`;
+}
+
+function renderErrors(errors) {
+  const items = errors.map((e) =>
+    `<li><code>${esc(e.path || '(root)')}</code> · ${esc(e.message)}
+         <span class="muted">[${esc(e.code)}]</span></li>`).join('');
+  $('result').innerHTML = `<div class="errs"><strong class="diff">规格非法（共 ${errors.length} 项，已一次列出）：</strong><ul>${items}</ul></div>`;
+}
+
+async function refreshAuditList() {
+  const r = await fetch('/api/audits');
+  const data = await r.json();
+  const ul = $('auditList');
+  ul.innerHTML = '';
+  for (const a of [...(data.audits ?? [])].reverse().slice(0, 12)) {
+    const li = document.createElement('li');
+    const mark = a.result.functional ? '<span class="same">✓</span>' : '<span class="diff">✗</span>';
+    li.innerHTML = `<span>${mark}</span><code>${esc(a.auditId)}</code>
+      <span class="muted">${esc(a.createdAt)}</span>`;
+    const b = document.createElement('button');
+    b.textContent = '载入';
+    b.addEventListener('click', () => reopen(a.auditId));
+    li.appendChild(b);
+    ul.appendChild(li);
+  }
+}
+
+async function reopen(id) {
+  $('submitState').textContent = '加载中…';
+  const r = await fetch(`/api/audits/${encodeURIComponent(id)}`);
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({}));
+    $('submitState').textContent = e.error?.message ?? '加载失败';
+    return;
+  }
+  const rec = await r.json();
+  fillForm(rec);
+  $('submitState').textContent = `已重开审计 ${id}（持久化结论）`;
+}
+
+async function submit() {
+  const spec = collectSpec();
+  $('submitState').textContent = '分析中…';
+  let r;
+  try {
+    r = await fetch('/api/audits', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(spec),
+    });
+  } catch (e) {
+    $('submitState').textContent = `请求失败：${e.message}`;
+    return;
+  }
+  const data = await r.json();
+  if (r.status === 422) {
+    renderErrors(data.error.errors);
+    $('submitState').textContent = '规格非法，未持久化';
+    return;
+  }
+  if (r.status === 409) {
+    $('result').innerHTML = `<div class="errs"><strong class="diff">拒绝：</strong>${esc(data.error.message)}</div>`;
+    $('submitState').textContent = '标识已被不同载荷占用';
+    return;
+  }
+  if (!r.ok) {
+    $('submitState').textContent = `服务错误：${data.error?.message ?? r.status}`;
+    return;
+  }
+  lastLoadedAuditId = data.auditId;
+  renderResult(data.result, { frozen: !!data.replayed, createdAt: data.createdAt });
+  $('submitState').textContent = data.replayed
+    ? '同标识同载荷重传：回放冻结结论，未重新计算'
+    : '已提交并持久化';
+  refreshAuditList();
+}
+
+async function health() {
+  try {
+    const r = await fetch('/health');
+    const d = await r.json();
+    $('health').textContent = `健康：${d.status} · 已持久化 ${d.persisted} 项`;
+    $('health').style.color = 'var(--ok)';
+  } catch {
+    $('health').textContent = '健康检查失败';
+    $('health').style.color = 'var(--bad)';
+  }
+}
+
+// Demo: ε-transition with two-character output creating an ambiguity.
+// q0 --a/ε--> q1 (id e1), q1 --a/A--> qacc(qa)... let's build explicit:
+function loadDemo() {
+  $('auditId').value = 'DEMO-EPS-DUAL-OUTPUT';
+  $('alphabet').value = 'a b';
+  $('states').value = 'q0 q1 q2';
+  $('initialState').value = 'q0';
+  $('acceptingStates').value = 'q2';
+  $('transBody').innerHTML = '';
+  transitionRows = [];
+  // Path 1 for "a": q0 -a/A-> q1 -ε/BC-> q2  => output ABC
+  // Path 2 for "a": q0 -ε/X-> q1 -a/Y-> q2  => output XY
+  [
+    { id: 't1', from: 'q0', to: 'q1', input: 'a', output: 'A' },
+    { id: 't2', from: 'q1', to: 'q2', input: '',  output: 'BC' },
+    { id: 't3', from: 'q0', to: 'q1', input: '',  output: 'X' },
+    { id: 't4', from: 'q1', to: 'q2', input: 'a', output: 'Y' },
+  ].forEach(addRow);
+  clearEvidence();
+}
+
+$('addTrans').addEventListener('click', () => addRow());
+$('submitBtn').addEventListener('click', submit);
+$('reopenBtn').addEventListener('click', () => reopen($('reopenId').value.trim()));
+$('loadDemo').addEventListener('click', loadDemo);
+for (const id of ['auditId', 'alphabet', 'states', 'initialState', 'acceptingStates']) {
+  $(id).addEventListener('input', clearEvidence);
+}
+
+for (let i = 0; i < 3; i++) addRow();
+health();
+refreshAuditList();
+</script>
+</body>
+</html>

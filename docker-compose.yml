@@ -1,0 +1,24 @@
+services:
+  audit:
+    build: .
+    image: transducer-audit:latest
+    container_name: transducer-audit
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "8080"
+      DATA_FILE: "/data/audits.json"
+    ports:
+      # Configurable host port: override with  PORT=9090 docker compose up
+      - "${PORT:-8080}:8080"
+    volumes:
+      - audit-data:/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then(r=>{if(r.status!==200)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+volumes:
+  audit-data:
