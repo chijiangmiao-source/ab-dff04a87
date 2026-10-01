@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>星载指令转码器 · 功能一致性审计</title>
+<style>
+  :root {
+    --bg: #0e1320; --panel: #161d2e; --panel2: #1b2438; --line: #2a3652;
+    --text: #e6ebf5; --muted: #93a0bb; --accent: #5aa2ff; --accent2: #7ce0c0;
+    --ok: #46c48a; --bad: #ff6b6b; --warn: #ffc85c; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.55 -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+  header { padding: 18px 28px; border-bottom: 1px solid var(--line); display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+  header h1 { font-size: 18px; margin: 0; }
+  header .sub { color: var(--muted); font-size: 12.5px; }
+  main { max-width: 1200px; margin: 0 auto; padding: 22px 28px 60px; display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 22px; }
+  @media (max-width: 980px) { main { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; }
+  .card h2 { font-size: 15px; margin: 0 0 14px; color: var(--accent2); letter-spacing: .5px; }
+  label { display: block; font-size: 12.5px; color: var(--muted); margin: 10px 0 4px; }
+  input[type=text], select {
+    width: 100%; background: var(--panel2); border: 1px solid var(--line); color: var(--text);
+    border-radius: 6px; padding: 7px 9px; font-size: 13.5px; font-family: var(--mono);
+  }
+  input[type=text]:focus, select:focus { outline: none; border-color: var(--accent); }
+  .row { display: flex; gap: 12px; }
+  .row > div { flex: 1; }
+  .hint { font-size: 11.5px; color: var(--muted); margin-top: 3px; }
+  table { border-collapse: collapse; width: 100%; }
+  #transTable th { text-align: left; font-size: 11.5px; color: var(--muted); font-weight: 600; padding: 3px 4px; }
+  #transTable td { padding: 3px 4px; }
+  #transTable input, #transTable select { padding: 5px 6px; font-size: 12.5px; }
+  #transTable .col-id { width: 15%; } #transTable .col-src { width: 20%; }
+  #transTable .col-in { width: 18%; } #transTable .col-out { width: 18%; }
+  #transTable .col-tgt { width: 20%; } #transTable .col-del { width: 44px; }
+  button { cursor: pointer; border: 1px solid var(--line); background: var(--panel2); color: var(--text);
+    border-radius: 6px; padding: 7px 14px; font-size: 13px; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #08131f; font-weight: 600; }
+  button.ghost { color: var(--muted); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .btns { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; align-items: center; }
+  .pill { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+  .pill.OK { background: rgba(70,196,138,.15); color: var(--ok); border: 1px solid rgba(70,196,138,.4); }
+  .pill.BAD { background: rgba(255,107,107,.13); color: var(--bad); border: 1px solid rgba(255,107,107,.4); }
+  .pill.INVALID { background: rgba(255,200,92,.13); color: var(--warn); border: 1px solid rgba(255,200,92,.4); }
+  .pill.REPLAY { background: rgba(90,162,255,.13); color: var(--accent); border: 1px solid rgba(90,162,255,.4); }
+  #errors { margin-top: 12px; }
+  .err-item { background: rgba(255,200,92,.08); border: 1px solid rgba(255,200,92,.3);
+    border-radius: 6px; padding: 7px 10px; margin: 6px 0; font-size: 12.5px; }
+  .err-item b { color: var(--warn); font-family: var(--mono); }
+  .meta { color: var(--muted); font-size: 12px; }
+  .ev { margin-top: 14px; border: 1px solid rgba(255,107,107,.35); border-radius: 8px; padding: 12px 14px; background: rgba(255,107,107,.05); }
+  .ev h3 { margin: 0 0 8px; font-size: 13.5px; color: var(--bad); }
+  .paths { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 720px) { .paths { grid-template-columns: 1fr; } }
+  .pathbox { background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; }
+  .pathbox h4 { margin: 0 0 6px; font-size: 12.5px; color: var(--accent); }
+  .step { font-family: var(--mono); font-size: 12px; padding: 2px 0; color: var(--text); white-space: nowrap; }
+  .step .eps { color: var(--muted); }
+  .outbox { font-family: var(--mono); font-size: 13px; margin-top: 8px; padding: 6px 8px; background: #0d1424; border-radius: 5px; word-break: break-all; }
+  .outbox.diff b { color: var(--bad); }
+  .loadrow { display: flex; gap: 8px; align-items: center; }
+  .loadrow input { flex: 1; }
+  #health { margin-left: auto; }
+  #health .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+  #health.ok .dot { background: var(--ok); } #health.bad .dot { background: var(--bad); }
+  .tagrow { display:flex; gap:8px; align-items:center; margin-top:4px; flex-wrap: wrap;}
+  code { font-family: var(--mono); background: #0d1424; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+  .stale-note { font-size: 11.5px; color: var(--warn); margin-top: 6px; display: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>星载指令转码器 · 功能一致性审计</h1>
+  <span class="sub">精确判定：任一输入串是否会沿两条可接受路径产生不同下行字节串（不做长度截断 / 随机抽样 / 有限枚举）</span>
+  <span id="health" class="meta"><span class="dot"></span>健康检查中…</span>
+</header>
+<main>
+  <section class="card" id="editor">
+    <h2>换能器草稿</h2>
+    <label>稳定审计标识（audit_id）</label>
+    <input type="text" id="auditId" placeholder="例如 SAT-TC-AUDIT-0001" autocomplete="off">
+    <div class="row">
+      <div>
+        <label>输入字母表（单字符，逗号或空格分隔）</label>
+        <input type="text" id="alphabet" placeholder="a,b,0,1" autocomplete="off">
+      </div>
+      <div>
+        <label>初态</label>
+        <input type="text" id="initial" placeholder="q0" autocomplete="off">
+      </div>
+    </div>
+    <div class="row">
+      <div>
+        <label>状态集（至多 10 个）</label>
+        <input type="text" id="states" placeholder="q0,q1,q2" autocomplete="off">
+      </div>
+      <div>
+        <label>接受态（至少 1 个，逗号分隔）</label>
+        <input type="text" id="accepts" placeholder="q2" autocomplete="off">
+      </div>
+    </div>
+
+    <label style="margin-top:16px">迁移（至多 30 条；输入可为某符号或 ε；输出 0–2 个大写 ASCII）</label>
+    <table id="transTable">
+      <thead><tr>
+        <th class="col-id">标识</th><th class="col-src">源</th><th class="col-in">消费</th>
+        <th class="col-out">追加输出</th><th class="col-tgt">目标</th><th class="col-del"></th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+    <div class="btns">
+      <button type="button" id="addTrans" class="ghost">＋ 添加迁移</button>
+      <span class="meta" id="transCount"></span>
+    </div>
+
+    <div class="btns">
+      <button type="button" id="submit" class="primary">提交审计</button>
+      <button type="button" id="sample">填入 ε 双输出反例样例</button>
+      <button type="button" id="clear" class="ghost">清空草稿</button>
+    </div>
+    <div class="stale-note" id="staleNote">草稿已修改，旧证据已作废并清除，请重新提交。</div>
+  </section>
+
+  <section class="card" id="resultPanel">
+    <h2>审计结论</h2>
+    <div class="loadrow">
+      <input type="text" id="reopenId" placeholder="按审计标识重开历史审计…" autocomplete="off">
+      <button type="button" id="reopen">重开</button>
+    </div>
+    <div style="margin-top:16px" id="result">
+      <p class="meta">尚未提交。结论将在此处给出；不一致时返回输入串与两条逐迁移路径及各自输出，
+      按「输入串长度 → ASCII 序 → 迁移标识序」稳定裁决。</p>
+    </div>
+    <div id="errors"></div>
+  </section>
+</main>
+
+<script>
+"use strict";
+const EPS = "ε";
+const MAX_STATES = 10, MAX_TRANS = 30;
+const $ = (id) => document.getElementById(id);
+const tbody = document.querySelector("#transTable tbody");
+
+function splitList(s) {
+  return (s || "").split(/[,\s]+/).map(x => x.trim()).filter(Boolean);
+}
+
+/* ---------- 草稿编辑：立即清除旧证据 ---------- */
+let dirty = false;
+function markDirty() {
+  if (!dirty) {
+    dirty = true;
+    $("staleNote").style.display = "block";
+  }
+  const r = $("result");
+  if (r.dataset.evidence === "shown") {
+    renderPlaceholder("草稿已变更：旧证据已清除。重新提交以获得新结论。");
+  } else if (document.querySelector("#errors .err-item")) {
+    $("errors").innerHTML = "";
+  }
+}
+["auditId","alphabet","initial","states","accepts"].forEach(id =>
+  $(id).addEventListener("input", markDirty));
+
+/* ---------- 迁移行 ---------- */
+function stateOptions(sel) {
+  const states = splitList($("states").value);
+  return states.map(s => `<option value="${escapeHtml(s)}"${s===sel?" selected":""}>${escapeHtml(s)}</option>`).join("");
+}
+function symbolOptions(sel) {
+  const syms = splitList($("alphabet").value);
+  let opts = `<option value="${EPS}"${sel===EPS?" selected":""}>${EPS}（不消费）</option>`;
+  for (const a of syms) opts += `<option value="${escapeHtml(a)}"${a===sel?" selected":""}>${escapeHtml(a)}</option>`;
+  return opts;
+}
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+function addTransitionRow(t = {}) {
+  if (tbody.rows.length >= MAX_TRANS) return;
+  const tr = document.createElement("tr");
+  tr.innerHTML = `
+    <td class="col-id"><input type="text" class="t-id" maxlength="32"></td>
+    <td class="col-src"><select class="t-src"></select></td>
+    <td class="col-in"><select class="t-in"></select></td>
+    <td class="col-out"><input type="text" class="t-out" maxlength="2" placeholder="如 AB" style="text-transform:uppercase"></td>
+    <td class="col-tgt"><select class="t-tgt"></select></td>
+    <td class="col-del"><button type="button" class="ghost t-del" title="删除">✕</button></td>`;
+  tbody.appendChild(tr);
+  const idIn = tr.querySelector(".t-id"), outIn = tr.querySelector(".t-out");
+  idIn.value = t.id || ("t" + (tbody.rows.length));
+  tr.querySelector(".t-src").innerHTML = stateOptions(t.source);
+  tr.querySelector(".t-in").innerHTML = symbolOptions(t.input);
+  tr.querySelector(".t-tgt").innerHTML = stateOptions(t.target);
+  outIn.value = t.output || "";
+  [idIn, outIn].forEach(el => el.addEventListener("input", markDirty));
+  tr.querySelectorAll("select").forEach(el => el.addEventListener("change", markDirty));
+  tr.querySelector(".t-del").addEventListener("click", () => { tr.remove(); refreshCounts(); markDirty(); });
+  refreshCounts();
+  markDirty();
+}
+$("states").addEventListener("change", refreshStateSelects);
+$("alphabet").addEventListener("change", refreshSymbolSelects);
+function refreshStateSelects() {
+  for (const tr of tbody.rows) {
+    for (const cls of [".t-src", ".t-tgt"]) {
+      const sel = tr.querySelector(cls), cur = sel.value;
+      sel.innerHTML = stateOptions(cur);
+    }
+  }
+}
+function refreshSymbolSelects() {
+  for (const tr of tbody.rows) {
+    const sel = tr.querySelector(".t-in"), cur = sel.value;
+    sel.innerHTML = symbolOptions(cur);
+  }
+}
+function refreshCounts() {
+  $("transCount").textContent = `迁移 ${tbody.rows.length} / ${MAX_TRANS}（状态 ${splitList($('states').value).length} / ${MAX_STATES}）`;
+  $("addTrans").disabled = tbody.rows.length >= MAX_TRANS;
+}
+$("addTrans").addEventListener("click", () => addTransitionRow());
+$("states").addEventListener("input", () => { refreshCounts(); });
+$("alphabet").addEventListener("input", refreshCounts);
+
+function collectSpec() {
+  return {
+    audit_id: $("auditId").value.trim(),
+    alphabet: splitList($("alphabet").value),
+    states: splitList($("states").value),
+    initial: $("initial").value.trim(),
+    accepts: splitList($("accepts").value),
+    transitions: [...tbody.rows].map(r => ({
+      id: r.querySelector(".t-id").value.trim(),
+      source: r.querySelector(".t-src").value,
+      input: r.querySelector(".t-in").value,
+      output: r.querySelector(".t-out").value.toUpperCase(),
+      target: r.querySelector(".t-tgt").value,
+    })),
+  };
+}
+
+/* ---------- 结论渲染 ---------- */
+function renderPlaceholder(msg) {
+  $("result").dataset.evidence = "";
+  $("result").innerHTML = `<p class="meta">${escapeHtml(msg)}</p>`;
+}
+function pill(status, replayed) {
+  if (status === "CONSISTENT") return `<span class="pill OK">功能一致 CONSISTENT</span>`;
+  if (status === "INCONSISTENT") return `<span class="pill BAD">功能不一致 INCONSISTENT</span>`;
+  if (status === "INVALID") return `<span class="pill INVALID">规格非法 INVALID</span>`;
+  return `<span class="pill REPLAY">${escapeHtml(status)}</span>`;
+}
+function stepHtml(st, i) {
+  const inp = st.input === EPS
+    ? `<span class="eps">${EPS}（不消费）</span>` : `输入 <b>${escapeHtml(st.input)}</b>`;
+  const out = st.output ? `追加 <b>${escapeHtml(st.output)}</b>` : `<span class="eps">输出 ε</span>`;
+  return `<div class="step">${i+1}. [${escapeHtml(st.id)}] ${escapeHtml(st.source)} ─ ${inp} / ${out} → ${escapeHtml(st.target)}</div>`;
+}
+function renderResult(d) {
+  dirty = false; $("staleNote").style.display = "none";
+  $("errors").innerHTML = "";
+  const tag = d.replayed ? ` <span class="pill REPLAY">冻结回放 REPLAYED</span>` : "";
+  let html = `<div class="tagrow">${pill(d.status, d.replayed)}${tag}</div>`;
+  html += `<p class="meta" style="margin-top:8px">审计标识 <code>${escapeHtml(d.audit_id)}</code>` +
+          ` · 载荷摘要 <code>${escapeHtml((d.payload_hash||"").slice(0,16))}…</code>` +
+          (d.created_at ? ` · 建立 ${escapeHtml(d.created_at)}` : "") + `</p>`;
+
+  if (d.status === "CONSISTENT") {
+    html += `<p>对字母表上的<b>所有</b>输入串（含任意 ε 迁移穿插），所有可接受路径的下行字节串均相同。</p>`;
+  }
+  if (d.status === "INCONSISTENT" && d.evidence) {
+    const ev = d.evidence, [p1, p2] = ev.paths;
+    html += `<div class="ev"><h3>反例（稳定裁决：输入长度 → ASCII 序 → 迁移标识序）</h3>
+      <div>输入串：<code>${escapeHtml(ev.input === "" ? "ε（空串）" : ev.input)}</code>（长度 ${ev.input.length}）</div>
+      <div class="paths">
+        <div class="pathbox"><h4>路径 A（${p1.length} 条迁移）</h4>${p1.map(stepHtml).join("")}
+          <div class="outbox">下行字节串 A：<b>${escapeHtml(ev.outputs[0] === "" ? "ε（空）" : ev.outputs[0])}</b></div></div>
+        <div class="pathbox"><h4>路径 B（${p2.length} 条迁移）</h4>${p2.map(stepHtml).join("")}
+          <div class="outbox">下行字节串 B：<b>${escapeHtml(ev.outputs[1] === "" ? "ε（空）" : ev.outputs[1])}</b></div></div>
+      </div></div>`;
+  }
+  $("result").dataset.evidence = d.evidence ? "shown" : "";
+  $("result").innerHTML = html;
+  if (Array.isArray(d.errors) && d.errors.length) {
+    $("errors").innerHTML = d.errors.map(e =>
+      `<div class="err-item"><b>${escapeHtml(e.code)}</b> · ${escapeHtml(e.message)}</div>`).join("");
+  }
+}
+function renderErrors(errors) {
+  dirty = false; $("staleNote").style.display = "none";
+  $("result").dataset.evidence = "";
+  $("result").innerHTML = `<div class="tagrow"><span class="pill INVALID">规格非法 INVALID</span></div>`;
+  $("errors").innerHTML = (errors||[]).map(e =>
+    `<div class="err-item"><b>${escapeHtml(e.code)}</b> · ${escapeHtml(e.message)}</div>`).join("")
+    || `<div class="err-item">未知错误</div>`;
+}
+
+/* ---------- API ---------- */
+async function refreshHealth() {
+  try {
+    const r = await fetch("/health");
+    const j = await r.json();
+    const el = $("health");
+    if (r.ok && j.status === "ok") {
+      el.className = "meta ok";
+      el.innerHTML = `<span class="dot"></span>健康 · 已持久化审计 ${j.persisted_audits} 条 · v${escapeHtml(j.version||"")}`;
+    } else {
+      el.className = "meta bad"; el.innerHTML = `<span class="dot"></span>服务异常`;
+    }
+  } catch { const el = $("health"); el.className = "meta bad"; el.innerHTML = `<span class="dot"></span>服务不可达`; }
+}
+async function submit() {
+  const body = collectSpec();
+  $("submit").disabled = true;
+  try {
+    const r = await fetch("/api/audits", {
+      method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+    const j = await r.json();
+    if (j.status === "INVALID") renderErrors(j.errors); else renderResult(j);
+  } catch (e) {
+    renderErrors([{code:"NETWORK", message:"无法连接审计服务：" + e}]);
+  } finally { $("submit").disabled = false; refreshHealth(); }
+}
+$("submit").addEventListener("click", submit);
+$("reopen").addEventListener("click", async () => {
+  const id = $("reopenId").value.trim() || $("auditId").value.trim();
+  if (!id) { renderErrors([{code:"AUDIT_ID_REQUIRED", message:"请填写要重开的审计标识。"}]); return; }
+  try {
+    const r = await fetch("/api/audits/" + encodeURIComponent(id));
+    const j = await r.json();
+    if (!r.ok) { renderErrors(j.errors || [{code:"NOT_FOUND", message:"审计不存在。"}]); return; }
+    loadSpecIntoForm(j.spec);
+    renderResult(j);
+  } catch (e) { renderErrors([{code:"NETWORK", message:"无法连接审计服务：" + e}]); }
+});
+function loadSpecIntoForm(spec) {
+  $("auditId").value = spec.audit_id || $("auditId").value;
+  $("alphabet").value = (spec.alphabet||[]).join(",");
+  $("states").value = (spec.states||[]).join(",");
+  $("initial").value = spec.initial || "";
+  $("accepts").value = (spec.accepts||[]).join(",");
+  tbody.innerHTML = "";
+  (spec.transitions||[]).forEach(t => addTransitionRow(t));
+  refreshStateSelects(); refreshSymbolSelects(); refreshCounts();
+  dirty = false; $("staleNote").style.display = "none";
+}
+
+/* ---------- 样例 / 清空 ---------- */
+$("sample").addEventListener("click", () => {
+  loadSpecIntoForm({
+    alphabet: ["a"], states: ["q0","q1"], initial: "q0", accepts: ["q1"],
+    transitions: [
+      {id:"e1", source:"q0", input:EPS, output:"AB", target:"q1"},
+      {id:"e2", source:"q0", input:EPS, output:"",   target:"q1"},
+      {id:"t1", source:"q1", input:"a",  output:"C",  target:"q1"},
+    ],
+  });
+  $("auditId").value = "DEMO-EPSILON-DUAL-OUTPUT";
+  renderPlaceholder("已填入含 ε 迁移的双输出反例样例，点击“提交审计”。");
+});
+$("clear").addEventListener("click", () => {
+  ["auditId","alphabet","initial","states","accepts"].forEach(id => $(id).value = "");
+  tbody.innerHTML = ""; refreshCounts(); markDirty();
+  renderPlaceholder("草稿已清空。");
+});
+
+refreshStateSelects(); refreshSymbolSelects(); refreshCounts(); refreshHealth();
+</script>
+</body>
+</html>
